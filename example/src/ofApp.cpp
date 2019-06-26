@@ -5,10 +5,15 @@
 void ofApp::setup(){
 
 	ofSetFrameRate(60);
+	ofSetLogLevel(OF_LOG_VERBOSE);
 
 	RUI_SETUP();
 	// setup params
+	OFX_ELASTIC_SETUP_PARAMS();
 	RUI_LOAD_FROM_XML();
+
+	OFX_ELASTIC_SETUP();
+
 	
 }
 
@@ -32,6 +37,10 @@ void ofApp::exit() {
 
 //--------------------------------------------------------------
 void ofApp::keyPressed(int key){
+
+	if (key == 'r') {
+		OFX_ELASTIC_LOG("{\"time\":\""+ofToString(ofGetFrameNum())+"\"}");
+	}
 
 }
 
