@@ -39,7 +39,8 @@ void ofxElastic::setupParams() {
 	RUI_SHARE_PARAM_WCN("ELK_Username", username);
 	RUI_SHARE_PARAM_WCN("ELK_Password", password);
 	RUI_SHARE_PARAM_WCN("ELK_Content Type", contentType);
-	
+	RUI_SHARE_PARAM_WCN("ELK_Max Send Attempts", maxSendAttempts, 1, 10);
+	RUI_SHARE_PARAM_WCN("ELK_Send Attempt Timeout", sendTimeout, 0.1, 60);
 
 
 
@@ -68,17 +69,29 @@ void ofxElastic::update() {
 	string auth = username + ":" + password;
 	string headerValue = "Basic " + base64_encode((unsigned char*)auth.c_str(), auth.length());
 
+	// Remove any docs flagged for removal
+	for (int i = docQueue.size() - 1; i >= 0; i--) {
+		if (docQueue[i].flagRemove) {
+			ofLogVerbose("ofxElastic") << "Deleting doc";
+			lock();
+			docQueue.erase(docQueue.begin() + i);
+			unlock();
+		}
+	}
 
 	// Go through all documents
 	for (int i = 0; i < docQueue.size(); i++) {
 
-		// Lock
-		lock();
 		// Get this document
+		lock();
 		ofxElasticDoc doc = docQueue.front();
-		// Unlock
 		unlock();
 
+		// Check to see if it's time to re-request it
+		// If not, then skip this document
+		if (doc.lastSendAttempt != 0 && ofGetElapsedTimef() - doc.lastSendAttempt < sendTimeout) continue;
+
+		// This is a document that we need to send
 		// Send this document
 		ofHttpRequest req;
 		req.method = ofHttpRequest::POST;
@@ -100,15 +113,13 @@ void ofxElastic::update() {
 
 		// Save this request ID and mark doc as sending
 		lock();
-		if (!docQueue.empty()) docQueue.front().httpRequestID = requestID;
-		nSendAttempts++;
+		if (!docQueue.empty()) {
+			docQueue.front().httpRequestID = requestID;
+			docQueue.front().nSendAttempts++;
+			docQueue.front().lastSendAttempt = ofGetElapsedTimef();
+		}
 		unlock();
-
-
-		// If it has been sent, then delete it
-
 	}
-	docQueue.clear();
 }
 
 // --------------------------------------------------------------
@@ -132,9 +143,33 @@ void ofxElastic::urlResponse(ofHttpResponse& response) {
 		ElasticResponse resp;
 		resp.parse(response.data.getText());
 		ofLogNotice("ofxElastic") << "\n" << resp.getString();
+
+		// Mark this doc for deletion
+		for (int i = 0; i < docQueue.size(); i++) {
+			if (docQueue[i].httpRequestID == response.request.getID()) {
+				ofLogVerbose("ofxElastic") << "successful response, so marking for deletion";
+				lock();
+				docQueue[i].flagRemove = true;
+				unlock();
+			}
+		}
+
 	}
 	else {
 		ofLogNotice("ofxElastic") << "POST Failure: " << response.status << "\t name: " << response.request.name << "\t error: " << response.error << "\tdata: " << response.data.getText();
+
+		// Mark this doc for deletion if it has been attempted more than 
+		// the max number of times
+		// TODO: lock whole iteration?
+		for (int i = 0; i < docQueue.size(); i++) {
+			if (docQueue[i].httpRequestID == response.request.getID() && docQueue[i].nSendAttempts >= maxSendAttempts) {
+				ofLogVerbose("ofxElastic") << "Unsuccessful response and max number of attempts achieved. Marking doc for deletion";
+				lock();
+				docQueue[i].flagRemove = true;
+				unlock();
+			}
+		}
+
 		// status of -1 for failed
 		// by default tries 5 times
 		loader.remove(response.request.getID());

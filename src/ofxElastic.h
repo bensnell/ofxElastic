@@ -16,6 +16,8 @@ public:
 	int nSendAttempts = 0;
 	float lastSendAttempt = -1;
 
+	bool flagRemove = false;
+
 };
 
 class ElasticResponse {
