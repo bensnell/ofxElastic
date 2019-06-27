@@ -3,8 +3,9 @@
 #include "ofMain.h"
 #include "ofxRemoteUIServer.h"
 #include "ofxElasticMacros.h"
-#include "ofxSimpleHttp.h"
 #include "base64.h"
+#include "Poco/UUIDGenerator.h"
+#include "Poco/UUID.h"
 
 class ofxElasticDoc {
 public:
@@ -77,6 +78,10 @@ public:
 	void setup();
 	void log(string data);
 
+	// Log event data with a template v1
+	// If event session is empty, a uuid will be created
+	void log_v1(string eventSession, string eventName, string eventData);
+
 	void urlResponse(ofHttpResponse& response);
 
 protected:
@@ -108,4 +113,29 @@ protected:
 	// Parameters for sending
 	int maxSendAttempts = 5;
 	float sendTimeout = 3.0; // seconds
+
+	// Generator utility
+	Poco::UUIDGenerator uuidGenerator;
+
+	// Parameters specific to logging templates
+	// (index is specified above)
+	// If a parameter is empty, it is not recorded
+	string organization = "";
+	string project = "";
+	string exhibit = "";
+	string app_name = "";
+	string app_version = "";
+	float location_geo_lat = 0;
+	float location_geo_lon = 0;
+	string location_room = "";
+	string location_description = "";
+
+
+	// Helpers for hardware information
+	string getComputerModel();
+	string getComputerCPU();
+	string getComputerGPU();
+	string getComputerPlatform();
+	string getOS(); // not entirely accurate
+
 };

@@ -42,7 +42,16 @@ void ofxElastic::setupParams() {
 	RUI_SHARE_PARAM_WCN("ELK_Max Send Attempts", maxSendAttempts, 1, 10);
 	RUI_SHARE_PARAM_WCN("ELK_Send Attempt Timeout", sendTimeout, 0.1, 60);
 
-
+	RUI_NEW_GROUP("ELK_Elastic Template v1");
+	RUI_SHARE_PARAM_WCN("ELK_Organization", organization);
+	RUI_SHARE_PARAM_WCN("ELK_Project", project);
+	RUI_SHARE_PARAM_WCN("ELK_Exhibit", exhibit);
+	RUI_SHARE_PARAM_WCN("ELK_App Name", app_name);
+	RUI_SHARE_PARAM_WCN("ELK_App Version", app_version);
+	RUI_SHARE_PARAM_WCN("ELK_Location Geo Lat", location_geo_lat, -360, 360);
+	RUI_SHARE_PARAM_WCN("ELK_Location Geo Lon", location_geo_lon, -360, 360);
+	RUI_SHARE_PARAM_WCN("ELK_Location Room", location_room);
+	RUI_SHARE_PARAM_WCN("ELK_Location Description", location_description);
 
 }
 
@@ -63,7 +72,7 @@ void ofxElastic::update() {
 	// Regenerate the polling location
 	string url = serverUrl
 		+ (serverUrl.find_last_of('/') == (serverUrl.size() - 1) ? "" : "/")
-		+ index + "/"
+		+ index + "/" // TODO: make index changeable from doc to doc
 		+ postType;
 	string headerKey = "Authorization";
 	string auth = username + ":" + password;
@@ -177,12 +186,156 @@ void ofxElastic::urlResponse(ofHttpResponse& response) {
 }
 
 // --------------------------------------------------------------
+void ofxElastic::log_v1(string eventSession, string eventName, string eventData) {
+
+	// Create a unique session if one is not provided
+	if (eventSession.empty()) eventSession = uuidGenerator.createRandom().toString();
+
+	// Populate a document with a specific template
+	// The template contains this information:
+	ofJson js;
+	js["time"] = ofGetTimestampString("%Y-%m-%dT%H:%M:%S.%i%z");
+	if (!organization.empty()) js["organization"] = organization;
+	if (!project.empty()) js["project"] = project;
+	ofJson machine;
+	machine["type"] = "PC";
+	machine["os"] = getOS();
+	machine["version"] = "10"; // TODO
+	js["machine"] = machine;
+	if (!exhibit.empty()) js["exhibit"] = exhibit;
+	ofJson app;
+	if (!app_name.empty()) app["name"] = app_name;
+	if (!app_version.empty()) app["version"] = app_version;
+	if (!(app_name.empty() && app_version.empty())) js["app"] = app;
+	ofJson location;
+	ofJson geo;
+	if (location_geo_lat != 0) geo["lat"] = location_geo_lat;
+	if (location_geo_lon != 0) geo["lon"] = location_geo_lon;
+	if (location_geo_lat != 0 && location_geo_lon != 0) {
+		location["geo"] = geo;
+	}
+	if (!location_room.empty()) location["room"] = location_room;
+	if (!location_description.empty()) location["description"] = location_description;
+	if (location_geo_lat != 0 || location_geo_lon != 0 || !location_room.empty() || !location_description.empty()) {
+		js["location"] = location;
+	}
+	ofJson evt; // event
+	evt["session"] = eventSession;
+	evt["name"] = eventName;
+	evt["data"] = ofJson::parse(eventData);
+	js["event"] = evt;
+
+	// Create a document
+	ofxElasticDoc doc;
+	doc.data = js.dump();
+
+	ofLogNotice("ofxElastic") << "Logging Event with data: " << doc.data;
+
+	// Add this doc to the queue
+	lock();
+	docQueue.push_back(doc);
+	unlock();
+}
 
 // --------------------------------------------------------------
+string ofxElastic::getComputerModel() {
+
+#ifdef TARGET_OSX
+	size_t len = 0;
+	::sysctlbyname("hw.model", NULL, &len, NULL, 0);
+	std::string model(len - 1, '\0');
+	::sysctlbyname("hw.model", const_cast<char*>(model.data()), &len, NULL, 0);
+	return model;
+#endif
+#ifdef TARGET_WIN32
+	return "Windows PC";
+#endif
+	return "Unknown Model";
+}
 
 // --------------------------------------------------------------
+string ofxElastic::getComputerCPU() {
+#ifdef TARGET_OSX
+	size_t len = 0;
+	::sysctlbyname("machdep.cpu.brand_string", NULL, &len, NULL, 0);
+	std::string cpu(len - 1, '\0');
+	::sysctlbyname("machdep.cpu.brand_string", const_cast<char*>(cpu.data()), &len, NULL, 0);
+	return cpu;
+#endif
+
+#ifdef TARGET_WIN32
+	char buf[48];
+	int result[4];
+
+	__cpuid(result, 0x80000000);
+
+	if (result[0] >= (int)0x80000004) {
+		__cpuid((int*)(buf + 0), 0x80000002);
+		__cpuid((int*)(buf + 16), 0x80000003);
+		__cpuid((int*)(buf + 32), 0x80000004);
+
+		string brand = buf;
+
+		size_t i;
+		if ((i = brand.find("  ")) != string::npos)
+			brand = brand.substr(0, i);
+
+		return brand;
+	}
+#endif
+	return "Unknown CPU";
+}
 
 // --------------------------------------------------------------
+string ofxElastic::getComputerGPU() {
+	string renderer = string((char*)glGetString(GL_RENDERER));
+	return renderer;
+}
+
+// --------------------------------------------------------------
+string ofxElastic::getComputerPlatform() {
+
+	ofTargetPlatform platform = ofGetTargetPlatform();
+	switch (platform) {
+	case OF_TARGET_OSX: {
+#ifdef TARGET_OSX
+		string platS;
+		SInt32 major = 10, minor = 4, bugfix = 1;
+		Gestalt(gestaltSystemVersionBugFix, &bugfix);
+		Gestalt(gestaltSystemVersionMajor, &major);
+		Gestalt(gestaltSystemVersionMinor, &minor);
+		platS = "Macintosh; Mac OS X " + ofToString(major) + "." +
+			ofToString(minor) + "." + ofToString(bugfix);
+		return platS;
+#endif
+	}break;
+	case OF_TARGET_MINGW: return "Windows; MINGW"; break;
+	case OF_TARGET_WINVS:  return "Windows; Visual Studio"; break;
+	case OF_TARGET_IOS: return "iOS"; break;
+	case OF_TARGET_ANDROID: return "Android"; break;
+	case OF_TARGET_LINUX: return "Linux"; break;
+	case OF_TARGET_LINUX64: return "Linux 64"; break;
+	case OF_TARGET_LINUXARMV6L: return "Linux ARM v6"; break;
+	case OF_TARGET_LINUXARMV7L: return "Linux ARM v7"; break;
+	default: break;
+	}
+	return "Unknown Platform";
+}
+
+// --------------------------------------------------------------
+string ofxElastic::getOS() {
+
+	ofTargetPlatform platform = ofGetTargetPlatform();
+	switch (platform) {
+	case OF_TARGET_OSX: return "Macintosh";  break;
+	case OF_TARGET_MINGW: case OF_TARGET_WINVS:  return "Windows"; break;
+	case OF_TARGET_IOS: return "iOS"; break;
+	case OF_TARGET_ANDROID: return "Android"; break;
+	case OF_TARGET_LINUX: case OF_TARGET_LINUX64: case OF_TARGET_LINUXARMV6L: case OF_TARGET_LINUXARMV7L: return "Linux"; break;
+	default: break;
+	}
+	return "Unknown";
+}
 
 // --------------------------------------------------------------
 
