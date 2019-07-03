@@ -151,7 +151,7 @@ void ofxElastic::urlResponse(ofHttpResponse& response) {
 		ofLogNotice("ofxElastic") << "POST Success: " << response.status << "\t name: " << response.request.name << "\t error: " << response.error << "\tdata: " << response.data.getText();
 		ElasticResponse resp;
 		resp.parse(response.data.getText());
-		ofLogNotice("ofxElastic") << "\n" << resp.getString();
+		//ofLogNotice("ofxElastic") << "\n" << resp.getString();
 
 		// Mark this doc for deletion
 		for (int i = 0; i < docQueue.size(); i++) {
